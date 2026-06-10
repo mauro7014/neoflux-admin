@@ -2,26 +2,41 @@ import { useState, useEffect } from 'react'
 import NeoChat from './components/NeoChat'
 import ProjectsPanel from './components/ProjectsPanel'
 import DomainsPanel from './components/DomainsPanel'
+import ExpensesPanel from './components/ExpensesPanel'
+import AccountingPanel from './components/AccountingPanel'
 import { useNeoSpeech } from './hooks/useNeoSpeech'
-import { loadStorage, saveStorage, daysUntil } from './utils/calc'
+import { loadStorage, saveStorage, daysUntil, DEFAULT_DOMAINS } from './utils/calc'
 
 const TABS = [
   { id:'neo', icon:'⚡', label:'NEO' },
   { id:'projects', icon:'📁', label:'PROYECTOS' },
   { id:'domains', icon:'🌐', label:'DOMINIOS' },
+  { id:'expenses', icon:'💳', label:'GASTOS' },
+  { id:'accounting', icon:'📊', label:'CONTA' },
 ]
+
+function initDomains() {
+  const saved = loadStorage('nf_domains', null)
+  if (saved !== null) return saved
+  saveStorage('nf_domains', DEFAULT_DOMAINS)
+  return DEFAULT_DOMAINS
+}
 
 export default function App() {
   const [tab, setTab] = useState('neo')
   const [voiceEnabled, setVoiceEnabled] = useState(true)
-  const [projects, setProjects] = useState(()=>loadStorage('nf_projects',[]))
-  const [domains, setDomains] = useState(()=>loadStorage('nf_domains',[]))
+  const [projects, setProjects] = useState(() => loadStorage('nf_projects', []))
+  const [domains, setDomains] = useState(() => initDomains())
+  const [expenses, setExpenses] = useState(() => loadStorage('nf_expenses', []))
   const { speaking, listening, speak, stopSpeaking, startListening, stopListening } = useNeoSpeech(voiceEnabled)
-  useEffect(()=>{ saveStorage('nf_projects',projects) },[projects])
-  useEffect(()=>{ saveStorage('nf_domains',domains) },[domains])
-  const dA=domains.filter(d=>daysUntil(d.renews)<30&&daysUntil(d.renews)>=0).length
-  const pA=projects.filter(p=>daysUntil(p.end)<7&&daysUntil(p.end)>=0).length
-  const tA=dA+pA
+
+  useEffect(() => { saveStorage('nf_projects', projects) }, [projects])
+  useEffect(() => { saveStorage('nf_domains', domains) }, [domains])
+  useEffect(() => { saveStorage('nf_expenses', expenses) }, [expenses])
+
+  const dA = domains.filter(d => daysUntil(d.renews) < 60 && daysUntil(d.renews) >= 0).length
+  const pA = projects.filter(p => daysUntil(p.end) < 7 && daysUntil(p.end) >= 0).length
+  const tA = dA + pA
 
   return (
     <div style={{height:'100dvh',background:'#000',display:'flex',flexDirection:'column',overflow:'hidden'}}>
@@ -37,20 +52,22 @@ export default function App() {
 
       <div style={{flex:1,overflow:'hidden',display:'flex',flexDirection:'column'}}>
         <div style={{flex:1,overflow:'hidden'}}>
-          {tab==='neo'&&<NeoChat projects={projects} domains={domains} speak={speak} speaking={speaking} listening={listening} startListening={startListening} stopListening={stopListening} voiceEnabled={voiceEnabled} setVoiceEnabled={setVoiceEnabled}/>}
+          {tab==='neo'&&<NeoChat projects={projects} domains={domains} expenses={expenses} speak={speak} speaking={speaking} listening={listening} startListening={startListening} stopListening={stopListening} voiceEnabled={voiceEnabled} setVoiceEnabled={setVoiceEnabled}/>}
           {tab==='projects'&&<ProjectsPanel projects={projects} setProjects={setProjects}/>}
           {tab==='domains'&&<DomainsPanel domains={domains} setDomains={setDomains}/>}
+          {tab==='expenses'&&<ExpensesPanel expenses={expenses} setExpenses={setExpenses}/>}
+          {tab==='accounting'&&<AccountingPanel projects={projects} domains={domains} expenses={expenses}/>}
         </div>
         <div style={{display:'flex',background:'#000',borderTop:'1px solid #0d0d1a',flexShrink:0}}>
           {TABS.map(t=>{
             const isA=tab===t.id
             const badge=t.id==='domains'?dA:t.id==='projects'?pA:0
             return (
-              <button key={t.id} onClick={()=>setTab(t.id)} style={{flex:1,background:'none',border:'none',padding:'10px 8px 12px',display:'flex',flexDirection:'column',alignItems:'center',gap:4,cursor:'pointer',position:'relative'}}>
-                <div style={{position:'absolute',top:0,left:'20%',right:'20%',height:2,borderRadius:'0 0 3px 3px',background:isA?'#00aeef':'transparent',boxShadow:isA?'0 0 8px #00aeef':'none',transition:'all 0.2s'}}/>
-                <div style={{fontSize:20,filter:isA?'drop-shadow(0 0 6px #00aeef)':'grayscale(0.8) brightness(0.5)',transition:'filter 0.2s'}}>{t.icon}</div>
-                <div style={{fontFamily:'var(--font-display)',fontSize:8,letterSpacing:'0.15em',color:isA?'#00aeef':'#333355',transition:'color 0.2s'}}>{t.label}</div>
-                {badge>0&&<div style={{position:'absolute',top:6,right:'22%',width:14,height:14,borderRadius:'50%',background:'#fb923c',color:'#000',fontSize:8,fontWeight:900,display:'flex',alignItems:'center',justifyContent:'center',fontFamily:'var(--font-mono)'}}>{badge}</div>}
+              <button key={t.id} onClick={()=>setTab(t.id)} style={{flex:1,background:'none',border:'none',padding:'8px 4px 10px',display:'flex',flexDirection:'column',alignItems:'center',gap:3,cursor:'pointer',position:'relative'}}>
+                <div style={{position:'absolute',top:0,left:'15%',right:'15%',height:2,borderRadius:'0 0 3px 3px',background:isA?'#00aeef':'transparent',boxShadow:isA?'0 0 8px #00aeef':'none',transition:'all 0.2s'}}/>
+                <div style={{fontSize:18,filter:isA?'drop-shadow(0 0 6px #00aeef)':'grayscale(0.8) brightness(0.5)',transition:'filter 0.2s'}}>{t.icon}</div>
+                <div style={{fontFamily:'var(--font-display)',fontSize:7,letterSpacing:'0.1em',color:isA?'#00aeef':'#333355',transition:'color 0.2s'}}>{t.label}</div>
+                {badge>0&&<div style={{position:'absolute',top:5,right:'10%',width:13,height:13,borderRadius:'50%',background:'#fb923c',color:'#000',fontSize:7,fontWeight:900,display:'flex',alignItems:'center',justifyContent:'center'}}>{badge}</div>}
               </button>
             )
           })}

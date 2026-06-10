@@ -34,3 +34,10 @@ export function loadStorage(key, fallback) {
 export function saveStorage(key, value) {
   try { localStorage.setItem(key, JSON.stringify(value)) } catch {}
 }
+
+export const DEFAULT_DOMAINS = [
+  { id:1, name:'replastexpress.com.ar', registrar:'NIC Argentina', bought:'2025-06-06', renews:'2027-06-06', cost:'8500', renewCost:'8500', currency:'ARS', notes:'Cliente Replastexpress' },
+  { id:2, name:'neoflux.com.ar', registrar:'NIC Argentina', bought:'2025-06-07', renews:'2027-06-07', cost:'8500', renewCost:'8500', currency:'ARS', notes:'NeoFlux empresa' },
+  { id:3, name:'veninomas.com', registrar:'', bought:'2026-04-26', renews:'2027-04-26', cost:'1.50', renewCost:'1.50', currency:'EUR', notes:'Guía Rosario' },
+  { id:4, name:'hostflux.tech', registrar:'', bought:'2026-05-08', renews:'2027-05-08', cost:'1.50', renewCost:'1.50', currency:'EUR', notes:'HOST SaaS hotel' },
+]
