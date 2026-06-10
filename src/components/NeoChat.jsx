@@ -6,27 +6,17 @@ const OWNER = 'Mauro'
 
 const NEO_SYSTEM = `Sos Neo, el secretario privado y contador de Mauro en NeoFlux, empresa de desarrollo de software en Rosario, Argentina.
 
-IDENTIDAD:
-- Nombre: Neo
-- Personalidad: masculino, directo, confiable, con humor seco ocasional, como un socio de confianza
-- Idioma: español rioplatense siempre (vos, tenés, hacés, podés)
-- El dueño se llama MAURO — usá su nombre solo cuando sea natural, no en cada mensaje
+Personalidad: masculino, directo, confiable, humor seco. Rioplatense siempre (vos, tenés, hacés).
+Usá el nombre Mauro solo cuando sea natural, no en cada mensaje.
 
-CONVERSACIÓN NATURAL:
-- Respondé como en una conversación real entre dos personas
-- Frases cortas y directas, sin listas innecesarias
-- Si la respuesta es simple, respondé en 1-2 oraciones
-- Si necesita explicación, explicá sin rodeos
-- Recordás todo lo hablado en esta conversación
-- Nunca repitas lo que ya dijiste antes en el chat
-- Máximo 1 emoji, solo si aporta algo
+Respondé como en una charla real: frases cortas y directas. Si es simple, 1-2 oraciones. Sin listas innecesarias. Máximo 1 emoji.
 
 ESPECIALIDADES:
-1. PROYECTOS — fecha inicio + entrega + monto → días, ganancia diaria, tarifa por hora
-2. DOMINIOS — vencimientos, costos, alertas tempranas
-3. GASTOS — total mensual, rentabilidad real
-4. CONTABILIDAD — ingresos vs gastos, proyecciones
-5. ASESORÍA — pricing, estimaciones, gestión del tiempo`
+- PROYECTOS: fecha inicio + entrega + monto → días, ganancia diaria, tarifa por hora
+- DOMINIOS: vencimientos y costos
+- GASTOS: total mensual, rentabilidad
+- CONTABILIDAD: ingresos vs gastos
+- ASESORÍA: pricing, estimaciones`
 
 function renderMd(text) {
   return text
@@ -45,36 +35,39 @@ export default function NeoChat({ projects, domains, expenses, speak, speaking, 
   const inputRef = useRef(null)
   const initialized = useRef(false)
   const convModeRef = useRef(false)
+  const recognitionRef = useRef(null)
+  const isSpeakingRef = useRef(false)
+  const messagesRef = useRef([])
+
+  // Sincronizar mensajes con ref para usarlos en callbacks
+  useEffect(() => { messagesRef.current = messages }, [messages])
 
   function buildContext() {
-    let ctx = '\n\n--- DATOS ACTUALES DE NEOFLUX ---'
+    let ctx = '\n\n--- DATOS ACTUALES ---'
     if (projects.length) {
       ctx += '\nPROYECTOS:\n'
       projects.forEach(p => {
         const { dias, diario, porHora, left } = calcProject(p)
-        ctx += `• ${p.name}: ${formatDate(p.start)}→${formatDate(p.end)}, ${dias}d, ${p.currency||'USD'} ${fmtMoney(p.amount)}, $${fmtMoney(diario)}/día, $${fmtMoney(porHora)}/h. Faltan ${left}d.\n`
+        ctx += `• ${p.name}: ${formatDate(p.start)}→${formatDate(p.end)}, ${dias}d, ${p.currency||'USD'} ${fmtMoney(p.amount)}, $${fmtMoney(diario)}/día. Faltan ${left}d.\n`
       })
     } else ctx += '\nPROYECTOS: ninguno.'
-
     if (domains.length) {
       ctx += '\nDOMINIOS:\n'
       domains.forEach(d => {
         const left = daysUntil(d.renews)
-        ctx += `• ${d.name}: renueva ${formatDate(d.renews)} (${left}d)${left<60?' ⚠️':''}, ${d.currency||'USD'} ${d.renewCost||d.cost}\n`
+        ctx += `• ${d.name}: vence ${formatDate(d.renews)} (${left}d)${left<60?' ⚠️':''}, ${d.currency||'USD'} ${d.renewCost||d.cost}\n`
       })
     }
-
     if (expenses.length) {
       ctx += '\nGASTOS:\n'
       let tot = 0
       expenses.forEach(e => {
         const f = e.frequency==='Anual'?1/12:e.frequency==='Único'?0:1
-        const m = Number(e.amount)*f; tot += m
+        tot += Number(e.amount)*f
         ctx += `• ${e.name}: ${e.currency} ${e.amount} ${e.frequency}\n`
       })
       ctx += `TOTAL/MES: $${fmtMoney(tot)}\n`
     } else ctx += '\nGASTOS: ninguno.'
-
     return ctx
   }
 
@@ -83,6 +76,7 @@ export default function NeoChat({ projects, domains, expenses, speak, speaking, 
     initialized.current = true
     const greeting = { role:'assistant', content:`¡Hola Mauro! ¿En qué te ayudo?` }
     setMessages([greeting])
+    messagesRef.current = [greeting]
     setTimeout(() => speak('¡Hola Mauro! ¿En qué te ayudo?'), 600)
   }, [])
 
@@ -90,23 +84,68 @@ export default function NeoChat({ projects, domains, expenses, speak, speaking, 
     chatRef.current?.scrollTo({ top: chatRef.current.scrollHeight, behavior: 'smooth' })
   }, [messages, loading])
 
-  const listenAgain = useCallback(() => {
-    if (!convModeRef.current) return
-    setTimeout(() => {
-      startListening(
-        t => send(t),
-        () => {}
-      )
-    }, 800)
-  }, [startListening])
+  // ── Conversación continua real ──
+  const startContinuousListen = useCallback(() => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SR) return
 
-  async function send(text) {
-    const t = (text || input).trim()
-    if (!t || loading) return
-    setInput('')
-    const userMsg = { role:'user', content:t }
-    const newMsgs = [...messages, userMsg]
+    const rec = new SR()
+    rec.lang = 'es-AR'
+    rec.continuous = true        // clave: no para nunca
+    rec.interimResults = false
+    rec.maxAlternatives = 1
+
+    rec.onresult = (e) => {
+      // Ignorar si Neo está hablando
+      if (isSpeakingRef.current) return
+      const text = e.results[e.results.length - 1][0].transcript.trim()
+      if (text.length < 2) return
+      sendMessage(text)
+    }
+
+    rec.onerror = (e) => {
+      if (e.error === 'no-speech') return // ignorar silencio
+      if (e.error === 'aborted') return
+      // Reintentar en otros errores si sigue en modo conv
+      if (convModeRef.current) {
+        setTimeout(() => startContinuousListen(), 1000)
+      }
+    }
+
+    rec.onend = () => {
+      // Si sigue en modo conversación, reiniciar
+      if (convModeRef.current) {
+        setTimeout(() => startContinuousListen(), 500)
+      }
+    }
+
+    recognitionRef.current = rec
+    rec.start()
+  }, [])
+
+  const stopContinuousListen = useCallback(() => {
+    try { recognitionRef.current?.stop() } catch {}
+    recognitionRef.current = null
+  }, [])
+
+  function toggleConvMode() {
+    const next = !convMode
+    setConvMode(next)
+    convModeRef.current = next
+    if (next) {
+      startContinuousListen()
+    } else {
+      stopContinuousListen()
+    }
+  }
+
+  async function sendMessage(text) {
+    if (!text.trim() || loading) return
+    const userMsg = { role:'user', content: text }
+    const newMsgs = [...messagesRef.current, userMsg]
     setMessages(newMsgs)
+    messagesRef.current = newMsgs
+    setInput('')
     setLoading(true)
 
     try {
@@ -115,79 +154,67 @@ export default function NeoChat({ projects, domains, expenses, speak, speaking, 
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: 'claude-sonnet-4-20250514',
-          max_tokens: 1024,
+          max_tokens: 512,
           system: NEO_SYSTEM + buildContext(),
           messages: newMsgs.map(m => ({ role:m.role, content:m.content })),
         }),
       })
       const data = await res.json()
       const reply = data.content?.map(b => b.text||'').join('') || 'No pude conectarme.'
-      setMessages(prev => [...prev, { role:'assistant', content:reply }])
-      // Habla y después vuelve a escuchar si está en modo conversación
-      const utt = new SpeechSynthesisUtterance('')
-      speak(reply)
-      if (convModeRef.current) {
-        // Esperar que termine de hablar antes de escuchar
-        const wordCount = reply.split(' ').length
-        const waitMs = Math.max(2000, wordCount * 280)
-        setTimeout(() => listenAgain(), waitMs)
+      const assistantMsg = { role:'assistant', content: reply }
+      setMessages(prev => [...prev, assistantMsg])
+      messagesRef.current = [...newMsgs, assistantMsg]
+
+      // Hablar — bloquear mic mientras habla
+      if (voiceEnabled) {
+        isSpeakingRef.current = true
+        speak(reply)
+        // Estimar duración de la respuesta
+        const words = reply.split(' ').length
+        const ms = Math.max(1500, words * 320)
+        setTimeout(() => { isSpeakingRef.current = false }, ms)
       }
     } catch {
-      setMessages(prev => [...prev, { role:'assistant', content:'Error de conexión.' }])
+      const err = 'Error de conexión.'
+      setMessages(prev => [...prev, { role:'assistant', content: err }])
+      messagesRef.current = [...newMsgs, { role:'assistant', content: err }]
     }
     setLoading(false)
-    if (!convModeRef.current) inputRef.current?.focus()
   }
 
-  function toggleConvMode() {
-    const next = !convMode
-    setConvMode(next)
-    convModeRef.current = next
-    if (next) {
-      startListening(t => send(t), () => {})
-    } else {
-      stopListening()
-    }
+  async function send() {
+    await sendMessage(input)
   }
 
   function handleMic() {
-    if (convMode) { toggleConvMode(); return }
     if (listening) { stopListening(); return }
-    startListening(t => { setInput(t); send(t) }, err => console.warn(err))
+    startListening(t => sendMessage(t), err => console.warn(err))
   }
 
-  const SUGG = [
-    '¿Cómo está la empresa?',
-    '¿Qué dominios vencen pronto?',
-    '¿Cuánto gasto por mes?',
-    'Calculá un proyecto',
-  ]
+  const SUGG = ['¿Cómo está la empresa?','¿Dominios por vencer?','¿Cuánto gasto por mes?','Calculá un proyecto']
 
   return (
     <div style={{ height:'100%', display:'flex', flexDirection:'column', background:'#000' }}>
       {/* Avatar */}
-      <div style={{
-        padding:'20px 20px 14px', display:'flex', flexDirection:'column', alignItems:'center',
-        borderBottom:'1px solid #0d0d1a', background:'#000', position:'relative', overflow:'hidden',
-      }}>
+      <div style={{ padding:'20px 20px 12px', display:'flex', flexDirection:'column', alignItems:'center', borderBottom:'1px solid #0d0d1a', background:'#000', position:'relative', overflow:'hidden' }}>
         <div style={{ position:'absolute', inset:0, opacity:0.03, backgroundImage:'linear-gradient(#00aeef 1px,transparent 1px),linear-gradient(90deg,#00aeef 1px,transparent 1px)', backgroundSize:'28px 28px' }} />
         <div style={{ position:'absolute', inset:0, background:'radial-gradient(ellipse at center,transparent 40%,#000 85%)' }} />
         <div style={{ position:'relative', zIndex:1, width:'100%', display:'flex', justifyContent:'center' }}>
-          <NeoAvatar speaking={speaking} listening={listening} />
+          <NeoAvatar speaking={speaking} listening={convMode || listening} />
         </div>
-
-        {/* Botón modo conversación */}
+        {/* Botón conversación */}
         <button onClick={toggleConvMode} style={{
           marginTop:10, position:'relative', zIndex:1,
           background: convMode ? 'rgba(0,212,255,0.12)' : '#0d0d1a',
           border: convMode ? '1px solid #00d4ff66' : '1px solid #1a1a30',
-          borderRadius:20, padding:'6px 16px',
+          borderRadius:20, padding:'6px 20px',
           color: convMode ? '#00d4ff' : '#444466',
           fontFamily:'var(--font-mono)', fontSize:10, letterSpacing:'0.12em',
           cursor:'pointer', transition:'all 0.3s',
-          boxShadow: convMode ? '0 0 12px #00d4ff33' : 'none',
+          boxShadow: convMode ? '0 0 16px #00d4ff33' : 'none',
+          animation: convMode ? 'convpulse 2s ease-in-out infinite' : 'none',
         }}>
-          {convMode ? '🎙️ CONVERSACIÓN ACTIVA' : '○ ACTIVAR CONVERSACIÓN'}
+          {convMode ? '🔴 CONVERSANDO — tocá para parar' : '🎙️ ACTIVAR CONVERSACIÓN'}
         </button>
       </div>
 
@@ -207,22 +234,18 @@ export default function NeoChat({ projects, domains, expenses, speak, speaking, 
             }} dangerouslySetInnerHTML={{ __html: renderMd(m.content) }} />
           </div>
         ))}
-
         {loading && (
           <div style={{ display:'flex', gap:8 }}>
             <div style={{ width:26, height:26, borderRadius:7, background:'linear-gradient(135deg,#001a66,#0066ff)', border:'1px solid #0044cc', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'var(--font-display)', fontSize:8, color:'#00d4ff' }}>N</div>
             <div style={{ background:'#0d0d1a', border:'1px solid #1a1a30', borderRadius:'14px 14px 14px 3px', padding:'11px 16px', display:'flex', gap:4, alignItems:'center' }}>
-              {[0,0.15,0.3].map((d,i) => (
-                <div key={i} style={{ width:6, height:6, borderRadius:'50%', background:'linear-gradient(135deg,#0066ff,#00d4ff)', animation:`dotbounce 0.7s ${d}s ease-in-out infinite alternate`, boxShadow:'0 0 5px #00d4ff88' }} />
-              ))}
+              {[0,0.15,0.3].map((d,i) => <div key={i} style={{ width:6, height:6, borderRadius:'50%', background:'linear-gradient(135deg,#0066ff,#00d4ff)', animation:`dotbounce 0.7s ${d}s ease-in-out infinite alternate`, boxShadow:'0 0 5px #00d4ff88' }} />)}
             </div>
           </div>
         )}
-
         {messages.length <= 1 && !loading && (
           <div style={{ display:'flex', flexWrap:'wrap', gap:6, marginTop:4 }}>
             {SUGG.map(s => (
-              <button key={s} onClick={() => send(s)} style={{ background:'#0d0d1a', border:'1px solid #1a1a30', borderRadius:20, padding:'6px 14px', fontSize:12, color:'#666688', cursor:'pointer', fontFamily:'var(--font-body)' }}
+              <button key={s} onClick={() => sendMessage(s)} style={{ background:'#0d0d1a', border:'1px solid #1a1a30', borderRadius:20, padding:'6px 14px', fontSize:12, color:'#666688', cursor:'pointer', fontFamily:'var(--font-body)' }}
                 onMouseEnter={e=>{e.currentTarget.style.borderColor='#00aeef44';e.currentTarget.style.color='#00aeef'}}
                 onMouseLeave={e=>{e.currentTarget.style.borderColor='#1a1a30';e.currentTarget.style.color='#666688'}}
               >{s}</button>
@@ -240,24 +263,14 @@ export default function NeoChat({ projects, domains, expenses, speak, speaking, 
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => e.key==='Enter' && !e.shiftKey && send()}
-            placeholder={convMode ? 'Modo conversación activo...' : listening ? 'Escuchando...' : 'Escribile a Neo...'}
+            placeholder={convMode ? '🎙️ Modo conversación activo — hablá nomás' : listening ? 'Escuchando...' : 'Escribile a Neo...'}
             disabled={convMode}
-            style={{ flex:1, opacity: convMode ? 0.4 : 1 }}
+            style={{ flex:1, opacity: convMode ? 0.5 : 1 }}
           />
-          <button onClick={handleMic} style={{
-            width:42, height:42, borderRadius:10, border:'none', flexShrink:0,
-            background: listening && !convMode ? 'rgba(248,113,113,0.15)' : '#0d0d1a',
-            color: listening && !convMode ? '#f87171' : '#666688',
-            fontSize:17, display:'flex', alignItems:'center', justifyContent:'center',
-            outline: listening && !convMode ? '1px solid #f8717166' : '1px solid #1a1a30',
-          }}>🎙️</button>
-          <button onClick={() => send()} disabled={!input.trim()||loading||convMode} style={{
-            width:42, height:42, borderRadius:10, border:'none', flexShrink:0,
-            background: input.trim()&&!loading&&!convMode ? 'linear-gradient(135deg,#0055cc,#3a6fff)' : '#0d0d1a',
-            color: input.trim()&&!loading&&!convMode ? '#fff' : '#333355',
-            fontSize:16, display:'flex', alignItems:'center', justifyContent:'center',
-            transition:'all 0.2s',
-          }}>▶</button>
+          {!convMode && <>
+            <button onClick={handleMic} style={{ width:42, height:42, borderRadius:10, border:'none', flexShrink:0, background: listening ? 'rgba(248,113,113,0.15)' : '#0d0d1a', color: listening ? '#f87171' : '#666688', fontSize:17, display:'flex', alignItems:'center', justifyContent:'center', outline: listening ? '1px solid #f8717166' : '1px solid #1a1a30' }}>🎙️</button>
+            <button onClick={send} disabled={!input.trim()||loading} style={{ width:42, height:42, borderRadius:10, border:'none', flexShrink:0, background: input.trim()&&!loading ? 'linear-gradient(135deg,#0055cc,#3a6fff)' : '#0d0d1a', color: input.trim()&&!loading ? '#fff' : '#333355', fontSize:16, display:'flex', alignItems:'center', justifyContent:'center' }}>▶</button>
+          </>}
         </div>
         <div style={{ display:'flex', justifyContent:'flex-end', marginTop:6 }}>
           <button onClick={() => setVoiceEnabled(v => !v)} style={{ background:'none', border:'none', color:voiceEnabled?'#00aeef':'#333355', fontSize:11, fontFamily:'var(--font-mono)', cursor:'pointer', letterSpacing:'0.08em' }}>
@@ -268,6 +281,7 @@ export default function NeoChat({ projects, domains, expenses, speak, speaking, 
 
       <style>{`
         @keyframes dotbounce { 0%{transform:translateY(0)} 100%{transform:translateY(-5px)} }
+        @keyframes convpulse { 0%,100%{box-shadow:0 0 16px #00d4ff33} 50%{box-shadow:0 0 28px #00d4ff66} }
       `}</style>
     </div>
   )
